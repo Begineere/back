@@ -9,49 +9,74 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// --- CORS: pozwól tylko na frontend produkcyjny lub lokalny ---
+// 🟦 LOG STARTOWY
+console.log("🔧 FRONTEND_URL:", process.env.FRONTEND_URL);
+console.log("🔧 EMAIL_USER:", process.env.EMAIL_USER);
+console.log("🔧 EMAIL_TO:", process.env.EMAIL_TO);
+
+// --- CORS (Render.com wymaga dokładnego origin) ---
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
-    methods: ["GET", "POST", "OPTIONS"],
+    origin: (origin, callback) => {
+      // 🔧 Dla Postmana i backend testów
+      if (!origin) return callback(null, true);
+
+      if (origin === process.env.FRONTEND_URL) {
+        return callback(null, true);
+      }
+
+      console.log("❌ Odrzucono CORS z origin:", origin);
+      return callback(new Error("CORS blocked"), false);
+    },
+    methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
 
-// --- MULTER: pamięć RAM, limit 10 MB na plik ---
+// --- Multer: RAM, limit 10 MB na plik ---
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-// --- ENDPOINT ---
+// --- PING TEST ---
+app.get("/", (_, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+// --- ENDPOINT /send-email ---
 app.post("/send-email", upload.array("files"), async (req, res) => {
+  console.log("📨 Odebrano POST /send-email");
+  console.log("➡ Body:", req.body);
+  console.log("➡ Files:", req.files?.length || 0);
+
   const files = req.files || [];
 
-  // Łączna wielkość plików max 24MB
-  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+  // Limit łączny 24 MB
+  const totalSize = files.reduce((s, f) => s + f.size, 0);
   if (totalSize > 24 * 1024 * 1024) {
     return res.status(400).json({
-      error: "Łączna wielkość wszystkich plików nie może przekraczać 24 MB.",
+      error: "Łączny rozmiar plików nie może przekraczać 24 MB.",
     });
   }
 
   const { name, company, email, phone, message } = req.body;
 
   if (!name || !email || !message) {
-    return res
-      .status(400)
-      .json({ error: "Imię, email i wiadomość są wymagane." });
+    return res.status(400).json({
+      error: "Imię, email i wiadomość są wymagane.",
+    });
   }
 
+  // --- KONFIGURACJA GMAIL (TA DZIAŁA NA RENDER.COM) ---
   const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // musi być App Password
+      user: process.env.EMAIL_USER, // Gmail
+      pass: process.env.EMAIL_PASS, // App Password
     },
   });
 
@@ -61,33 +86,13 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
       to: process.env.EMAIL_TO,
       subject: "Nowa wiadomość ze strony Plastserwis",
       html: `
-      <div style="font-family: Arial, sans-serif; background: #f5f7ff; padding: 20px;">
-        <div style="
-          max-width: 600px;
-          margin: auto;
-          background: white;
-          padding: 25px;
-          border-radius: 10px;
-          box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-          border-top: 6px solid #4f46e5;
-        ">
-          <h2 style="color:#4f46e5; margin-bottom: 20px;">📩 Nowa wiadomość kontaktowa</h2>
-          <p><strong>Imię i nazwisko:</strong> ${name}</p>
-          <p><strong>Firma:</strong> ${company || "—"}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Telefon:</strong> ${phone || "—"}</p>
-          <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
-          <h3 style="color:#333;">Wiadomość:</h3>
-          <p style="white-space:pre-line; color:#444;">
-            ${message}
-          </p>
-          <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
-          <p style="font-size:12px; color:#777; text-align:center;">
-            Plastserwis – lakiernia proszkowa<br>
-            Wiadomość wygenerowana automatycznie z formularza.
-          </p>
-        </div>
-      </div>
+        <h2>📩 Nowa wiadomość kontaktowa</h2>
+        <p><strong>Imię i nazwisko:</strong> ${name}</p>
+        <p><strong>Firma:</strong> ${company || "—"}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Telefon:</strong> ${phone || "—"}</p>
+        <hr/>
+        <p>${message}</p>
       `,
       attachments: files.map((file) => ({
         filename: file.originalname,
@@ -95,24 +100,28 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
       })),
     });
 
+    console.log("✅ Mail wysłany!");
     res.json({ message: "Email wysłany!" });
   } catch (err) {
     console.error("❌ Błąd wysyłki maila:", err);
-    res.status(500).json({ error: "Błąd serwera podczas wysyłania maila." });
+    res.status(500).json({
+      error: "Błąd serwera podczas wysyłania maila.",
+      details: err.code,
+    });
   }
 });
 
-// --- GLOBALNY HANDLER BŁĘDÓW MULTER ---
+// --- BŁĘDY MULTERA ---
 app.use((err, req, res, next) => {
   if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
-      error: "Jeden z plików przekracza maksymalny rozmiar 10 MB.",
+      error: "Jeden z plików przekracza limit 10 MB.",
     });
   }
   next(err);
 });
 
-// --- START SERWERA ---
+// --- START BACKENDU ---
 app.listen(PORT, () => {
   console.log(`🚀 Backend działa na porcie ${PORT}`);
 });
