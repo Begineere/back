@@ -9,10 +9,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// --- CORS: pozwól tylko na frontend produkcyjny lub lokalny ---
+// --- CORS: tymczasowo wszystko do testów ---
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:4173",
+    origin: "*", // na produkcji zmień na FRONTEND_URL
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -27,11 +27,19 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
-// --- ENDPOINT ---
-app.post("/send-email", upload.array("files"), async (req, res) => {
-  const files = req.files || [];
+// --- TESTOWY ENDPOINT ---
+app.get("/ping", (req, res) => {
+  console.log("✅ Ping received");
+  res.json({ ok: true, timestamp: new Date() });
+});
 
-  // Łączna wielkość plików max 24MB
+// --- LOG wszystkich POST do /send-email ---
+app.post("/send-email", upload.array("files"), async (req, res) => {
+  console.log("📨 /send-email POST request received");
+  console.log("Body:", req.body);
+  console.log("Files:", req.files);
+
+  const files = req.files || [];
   const totalSize = files.reduce((sum, f) => sum + f.size, 0);
   if (totalSize > 24 * 1024 * 1024) {
     return res.status(400).json({
@@ -40,7 +48,6 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
   }
 
   const { name, company, email, phone, message } = req.body;
-
   if (!name || !email || !message) {
     return res
       .status(400)
@@ -51,43 +58,41 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // musi być App Password
+      pass: process.env.EMAIL_PASS, // App Password Gmail
     },
   });
 
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: process.env.EMAIL_TO,
       subject: "Nowa wiadomość ze strony Plastserwis",
       html: `
-      <div style="font-family: Arial, sans-serif; background: #f5f7ff; padding: 20px;">
-        <div style="
-          max-width: 600px;
-          margin: auto;
-          background: white;
-          padding: 25px;
-          border-radius: 10px;
-          box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-          border-top: 6px solid #4f46e5;
-        ">
-          <h2 style="color:#4f46e5; margin-bottom: 20px;">📩 Nowa wiadomość kontaktowa</h2>
-          <p><strong>Imię i nazwisko:</strong> ${name}</p>
-          <p><strong>Firma:</strong> ${company || "—"}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Telefon:</strong> ${phone || "—"}</p>
-          <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
-          <h3 style="color:#333;">Wiadomość:</h3>
-          <p style="white-space:pre-line; color:#444;">
-            ${message}
-          </p>
-          <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
-          <p style="font-size:12px; color:#777; text-align:center;">
-            Plastserwis – lakiernia proszkowa<br>
-            Wiadomość wygenerowana automatycznie z formularza.
-          </p>
+        <div style="font-family: Arial, sans-serif; background: #f5f7ff; padding: 20px;">
+          <div style="
+            max-width: 600px;
+            margin: auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            border-top: 6px solid #4f46e5;
+          ">
+            <h2 style="color:#4f46e5; margin-bottom: 20px;">📩 Nowa wiadomość kontaktowa</h2>
+            <p><strong>Imię i nazwisko:</strong> ${name}</p>
+            <p><strong>Firma:</strong> ${company || "—"}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Telefon:</strong> ${phone || "—"}</p>
+            <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
+            <h3 style="color:#333;">Wiadomość:</h3>
+            <p style="white-space:pre-line; color:#444;">${message}</p>
+            <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;">
+            <p style="font-size:12px; color:#777; text-align:center;">
+              Plastserwis – lakiernia proszkowa<br>
+              Wiadomość wygenerowana automatycznie z formularza.
+            </p>
+          </div>
         </div>
-      </div>
       `,
       attachments: files.map((file) => ({
         filename: file.originalname,
@@ -95,10 +100,11 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
       })),
     });
 
+    console.log("✅ Email sent:", info.messageId);
     res.json({ message: "Email wysłany!" });
   } catch (err) {
     console.error("❌ Błąd wysyłki maila:", err);
-    res.status(500).json({ error: "Błąd serwera podczas wysyłania maila." });
+    res.status(500).json({ error: "Błąd serwera podczas wysyłania maila.", details: err.message });
   }
 });
 
@@ -109,6 +115,7 @@ app.use((err, req, res, next) => {
       error: "Jeden z plików przekracza maksymalny rozmiar 10 MB.",
     });
   }
+  console.error("⚠️ Global error:", err);
   next(err);
 });
 
