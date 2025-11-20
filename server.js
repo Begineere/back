@@ -58,7 +58,7 @@ app.post("/send-email", upload.array("files"), async (req, res) => {
   try {
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
-      to: "maczunio@icloud.com",
+      to: "plast1@onet.pl",
       subject: "Nowa wiadomość ze strony Plastserwis",
       html: `
       <div style="font-family: Arial, sans-serif; background: #f5f7ff; padding: 20px;">
