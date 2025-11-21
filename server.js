@@ -20,7 +20,7 @@ app.use(
 app.use(express.json());
 
 // --- SENDGRID ---
-sgMail.setApiKey(process.envSENDGRID_API_KEY);
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // --- MULTER ---
 const storage = multer.memoryStorage();
